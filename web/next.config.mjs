@@ -1,5 +1,8 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  // Optional path prefix for deployments mounted below an existing site. Next
+  // inlines this value into the client bundle, so it must be set at build time.
+  ...(process.env.CAREER_OPS_BASE_PATH ? { basePath: process.env.CAREER_OPS_BASE_PATH } : {}),
   // Two lockfiles exist on purpose (repo root + web/), so Next would infer the
   // repo root as the workspace root. On Windows that misinference can send
   // Turbopack's postcss workers into an unbounded respawn loop that exhausts
