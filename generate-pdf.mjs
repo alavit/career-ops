@@ -4,7 +4,7 @@
  * generate-pdf.mjs — HTML → PDF via Playwright
  *
  * Usage:
- *   node career-ops/generate-pdf.mjs <input.html> <output.pdf> [--format=letter|a4] [--report=NNN] [--allow-reorder] [--max-pages=N] [--strict-pages] [--skip-fact-check]
+ *   node career-ops/generate-pdf.mjs <input.html> <output.pdf> [--format=letter|a4] [--report=NNN] [--allow-reorder] [--max-pages=N] [--strict-pages] [--reuse] [--skip-fact-check]
  *   node career-ops/generate-pdf.mjs --batch=<manifest.json> [--format=letter|a4] [--allow-reorder] [--max-pages=N] [--strict-pages]
  *
  * --batch renders every document in a JSON manifest (an array of
@@ -36,7 +36,8 @@
 import { chromium } from 'playwright';
 import { resolve, dirname, relative, sep, isAbsolute, basename } from 'path';
 import { readFile } from 'fs/promises';
-import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'fs';
+import { existsSync, lstatSync, statSync, mkdirSync, readFileSync, realpathSync, writeFileSync, readdirSync } from 'fs';
+import { createHash } from 'node:crypto';
 import { fileURLToPath, pathToFileURL } from 'url';
 import { randomUUID } from 'node:crypto';
 import { getCareerOpsRoot } from './path-resolver.mjs';
@@ -1211,7 +1212,7 @@ async function generatePDF() {
 
   // Parse arguments
   let inputPath, outputPath, format = 'a4', reportNum = '', allowReorder = false;
-  let maxPages = 2, maxPagesInput = '2', strictPages = false, batchManifestPath = null;
+  let maxPages = 2, maxPagesInput = '2', strictPages = false, batchManifestPath = null, reuse = false;
 
   for (const arg of args) {
     if (arg.startsWith('--format=')) {
@@ -1227,6 +1228,8 @@ async function generatePDF() {
       allowReorder = true;
     } else if (arg === '--strict-pages') {
       strictPages = true;
+    } else if (arg === '--reuse') {
+      reuse = true;
     } else if (arg === '--skip-fact-check') {
       skipFactCheck = true;
     } else if (!inputPath) {
@@ -1246,6 +1249,10 @@ async function generatePDF() {
   // all entries; each entry supplies its own input/output and may override
   // format/reportNum. Takes no positional input/output.
   if (batchManifestPath) {
+    if (reuse) {
+      console.error('--reuse is supported for single-file exports only, not --batch.');
+      process.exit(1);
+    }
     // --report keys a single PDF to one tracker row; a batch renders N distinct
     // CVs, so one global --report would mislabel them all. Per-entry "reportNum"
     // in the manifest is the correct channel — reject the global flag here rather
@@ -1258,7 +1265,7 @@ async function generatePDF() {
   }
 
   if (!inputPath || !outputPath) {
-    console.error('Usage: node generate-pdf.mjs <input.html> <output.pdf> [--format=letter|a4] [--report=NNN] [--allow-reorder] [--max-pages=N] [--strict-pages]');
+    console.error('Usage: node generate-pdf.mjs <input.html> <output.pdf> [--format=letter|a4] [--report=NNN] [--allow-reorder] [--max-pages=N] [--strict-pages] [--reuse]');
     console.error('   or: node generate-pdf.mjs --batch=<manifest.json> [--format=letter|a4] [--allow-reorder] [--max-pages=N] [--strict-pages]');
     console.error('');
     console.error('Batch mode renders every document in the JSON manifest (an array of');
@@ -1367,15 +1374,108 @@ async function generatePDF() {
     }
   }
 
-  return renderHtmlToPdf(html, outputPath, {
+  const styleTokens = readStyleTokens(resolve(workspaceRoot, 'config', 'profile.yml'));
+  let cacheKey = reuse && !skipFactCheck && cvMarkdown
+    ? pdfCacheKey(html, { format, styleTokens }) : null;
+  const cachePath = `${outputPath}.cache.json`;
+  try { assertInsideWorkspace(cachePath, 'cache'); } catch { cacheKey = null; }
+  if (cacheKey && existsSync(outputPath)) {
+    try {
+      const metadata = JSON.parse(readFileSync(cachePath, 'utf8'));
+      const pdf = readFileSync(outputPath);
+      const pageCount = countRenderedPdfPages(pdf);
+      if (pdfCacheMatches(metadata, cacheKey, pdf) && pageCount > 0) {
+        enforcePageBudget(pageCount, { maxPages, strictPages });
+        updatePDFManifest(reportNum, outputPath, inputPath, format);
+        console.log(`✅ Reused verified PDF: ${outputPath} (${pageCount} pages)`);
+        return { outputPath, pageCount, size: pdf.length };
+      }
+    } catch (err) {
+      if (strictPages && /page/i.test(err.message)) throw err;
+      // Missing, invalid or stale metadata is always a cache miss.
+    }
+  }
+  const result = await renderHtmlToPdf(html, outputPath, {
     format,
     baseDir: dirname(inputPath),
     reportNum,
     inputPath,
     maxPages,
     strictPages,
-    styleTokens: readStyleTokens(resolve(workspaceRoot, 'config', 'profile.yml')),
+    styleTokens,
   });
+  if (cacheKey) {
+    try { writeFileSync(cachePath, JSON.stringify({ key: cacheKey, pdfHash: hashBytes(readFileSync(outputPath)) }) + '\n'); }
+    catch (err) { console.warn(`⚠️  PDF cache not saved: ${err.message}`); }
+  }
+  return result;
+}
+
+function hashBytes(value) { return createHash('sha256').update(value).digest('hex'); }
+
+export function pdfCacheMatches(metadata, key, pdf) {
+  return !!key && metadata?.key === key && metadata.pdfHash === hashBytes(pdf);
+}
+
+// Cache only self-contained HTML. Local fonts are inlined by this renderer and
+// hashed below; arbitrary images, CSS imports and remote resources disable reuse.
+export function pdfCacheKey(html, options) {
+  try { return computePdfCacheKey(html, options); } catch { return null; }
+}
+
+function computePdfCacheKey(html, options) {
+  // Reject all resource-bearing elements and CSS escapes rather than trying to
+  // interpret arbitrary HTML/CSS. A cache miss is safer than a stale document.
+  const content = html.replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style\s*>/gi, block => block.replace(/\/\*[\s\S]*?\*\//g, ''));
+  if (/<(?:img|source|link|video|audio|object|embed|iframe)\b/i.test(content) || /@import\b|\\/i.test(content)) return null;
+  for (const match of content.matchAll(/url\(\s*(['"]?)(.*?)\1\s*\)/gi)) {
+    const url = match[2].trim();
+    if (!url.startsWith('data:') && !/^\.\/fonts\/[\w.-]+$/.test(url)) return null;
+  }
+  const hash = createHash('sha256');
+  hash.update(JSON.stringify({ html, options, platform: process.platform, arch: process.arch, node: process.version }));
+  const bundledPath = chromium.executablePath();
+  const browserPaths = [bundledPath,
+    ...(process.platform === 'win32' ? [resolve(process.env.PROGRAMFILES || 'C:/Program Files', 'Google/Chrome/Application/chrome.exe'), resolve(process.env['PROGRAMFILES(X86)'] || 'C:/Program Files (x86)', 'Google/Chrome/Application/chrome.exe')] :
+      process.platform === 'darwin' ? ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'] : ['/usr/bin/google-chrome', '/usr/bin/google-chrome-stable'])];
+  // Fingerprint the headless shell as well as the full Chromium executable.
+  const registry = dirname(dirname(dirname(bundledPath)));
+  if (existsSync(registry)) {
+    for (const entry of readdirSync(registry).filter(name => /^chromium_headless_shell-/.test(name)).sort()) {
+      const root = resolve(registry, entry);
+      const walk = dir => {
+        for (const name of readdirSync(dir).sort()) {
+          const path = resolve(dir, name);
+          const info = lstatSync(path);
+          if (info.isSymbolicLink()) throw new Error('Untracked browser symlink');
+          if (info.isDirectory()) walk(path);
+          else if (/^(chrome-headless-shell(?:\.exe)?|headless_shell)$/.test(name)) browserPaths.push(path);
+        }
+      };
+      walk(root);
+    }
+  }
+  const browsers = browserPaths.filter(path => existsSync(path));
+  if (!browsers.length) return null;
+  for (const path of browsers) {
+    const stat = statSync(path);
+    hash.update(JSON.stringify({ path, size: stat.size, mtime: stat.mtimeMs }));
+  }
+  for (const path of [fileURLToPath(import.meta.url), resolve(__dirname, 'theme-style.mjs'), resolve(__dirname, 'node_modules/playwright/package.json')]) {
+    if (!existsSync(path)) return null;
+    hash.update(readFileSync(path));
+  }
+  const fonts = resolve(__dirname, 'fonts');
+  if (existsSync(fonts)) {
+    for (const name of readdirSync(fonts).sort()) {
+      const path = resolve(fonts, name);
+      const info = lstatSync(path);
+      if (info.isSymbolicLink()) return null;
+      if (info.isFile()) { hash.update(name); hash.update(readFileSync(path)); }
+    }
+  }
+  return hash.digest('hex');
 }
 
 /**
@@ -1635,7 +1735,7 @@ export async function inlineLocalFonts(html) {
  * @returns {Promise<{outputPath: string, pageCount: number, size: number}>}
  */
 export async function renderHtmlToPdf(html, outputPath, opts = {}) {
-  const launchBrowser = opts.launchBrowser || ((options) => chromium.launch(options));
+  const launchBrowser = opts.launchBrowser || launchPdfBrowser;
   let browser = null;
   try {
     browser = await launchBrowser({ headless: true });
@@ -1645,6 +1745,21 @@ export async function renderHtmlToPdf(html, outputPath, opts = {}) {
       await browser.close().catch((err) => {
         console.warn(`⚠️  Browser cleanup failed: ${err.message}`);
       });
+    }
+  }
+}
+
+// Do not download browsers or mask unrelated launch failures. A missing bundled
+// browser falls back to the locally installed stable Chrome channel.
+export async function launchPdfBrowser(options, launch = opts => chromium.launch(opts)) {
+  try {
+    return await launch(options);
+  } catch (err) {
+    if (!/executable (?:doesn't|does not) exist/i.test(err.message)) throw err;
+    console.warn('Playwright Chromium is missing; trying installed Google Chrome.');
+    try { return await launch({ ...options, channel: 'chrome' }); }
+    catch (fallback) {
+      throw new Error(`Playwright Chromium and installed Chrome are unavailable. Install Chromium with npx playwright install chromium, or install Chrome. Chrome error: ${fallback.message}`, { cause: fallback });
     }
   }
 }
@@ -1838,7 +1953,7 @@ async function renderInPage(browser, html, outputPath, opts = {}) {
  * @returns {Promise<Array<{outputPath: string, ok: boolean, pageCount?: number, size?: number, error?: string}>>}
  */
 export async function renderBatch(entries, opts = {}) {
-  const launchBrowser = opts.launchBrowser || ((options) => chromium.launch(options));
+  const launchBrowser = opts.launchBrowser || launchPdfBrowser;
   const results = [];
   let browser = null;
   try {

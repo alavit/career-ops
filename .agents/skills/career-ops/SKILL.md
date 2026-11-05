@@ -87,6 +87,8 @@ Determine the mode from `$mode`:
 
 **Auto-pipeline detection:** If `$mode` is not a known sub-command AND contains JD text (keywords: "responsibilities", "requirements", "qualifications", "about the role", "we're looking for", company name + role) or a URL to a JD, execute `auto-pipeline`.
 
+If the user asks only to export an already tailored CV as PDF, use the fast export of an existing tailored CV in `modes/pdf.md`; do not run a fresh evaluation or tailoring pipeline.
+
 If `$mode` is not a sub-command AND doesn't look like a JD, show discovery.
 
 ---

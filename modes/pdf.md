@@ -1,5 +1,9 @@
 # Mode: pdf — ATS-Optimized PDF Generation
 
+## Fast export of an existing tailored CV
+
+When the user asks only to export an already-tailored CV to PDF, resolve the exact existing HTML and destination from the current application context or `data/pdf-index.tsv`. Do not refetch the job or rewrite the CV. If only the matching tailored Markdown exists, build HTML from its content without re-tailoring it, then run the fact gate. If the artifact is ambiguous or missing, ask which one to use; never silently select another application. Run `node generate-pdf.mjs <input.html> <output.pdf> --format=a4 --reuse` (use the existing format and report number when known). This command still runs section-order validation, ATS normalization, and the fact gate before checking the cache. It reuses a PDF only when its hash and tracked rendering inputs match; otherwise it renders again. External assets disable reuse. Page limits and manifest linkage still apply. Inspect the output when the content or layout changes; do not take screenshots without user consent. If the user asks for fresh tailoring, use the full pipeline below instead.
+
 Optional pass:
 - **`--hm-audit`:** `/career-ops pdf --hm-audit` adds the hiring-manager audit at Step 20 — an adversarial read of the tailored CV by a separate, research-grounded reviewer before it becomes a PDF (`modes/pdf/hm-audit.md`). Off by default: it costs a subagent dispatch plus web research. Turn it on per run with the flag, or for every run in your own `modes/_custom.md`.
 
