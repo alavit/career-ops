@@ -353,11 +353,15 @@ function buildExperience(entries, partial) {
       const bullets = Array.isArray(e.bullets)
         ? e.bullets.filter(Boolean).map(b => `        <li>${escapeHtml(b)}</li>`).join('\n')
         : '';
+      const bulletList = bullets ? `\n    <ul>\n${bullets}\n    </ul>` : '';
       const location = e.location
         ? `\n    <div class="job-location">${escapeHtml(e.location)}</div>`
         : '';
       const projectDescription = e.project_description
         ? `\n    <div class="job-project-description">${escapeHtml(e.project_description)}</div>`
+        : '';
+      const technologies = e.technologies
+        ? `\n    <div class="job-technologies"><strong>Tools and Technologies:</strong> ${escapeHtml(e.technologies)}</div>`
         : '';
       return `<div class="job">
     <div class="job-header">
@@ -365,9 +369,7 @@ function buildExperience(entries, partial) {
       <span class="job-period">${escapeHtml(e.dates || e.period || '')}</span>
     </div>
     <div class="job-role">${escapeHtml(e.role)}</div>${location}${projectDescription}
-    <ul>
-${bullets}
-    </ul>
+${bulletList}${technologies}
   </div>`;
     }).join('\n  ');
   }
@@ -380,6 +382,8 @@ ${bullets}
     const blockValues = new Map([
       ['LOCATION_BLOCK', { value: escapeHtml(e.location || ''), present: Boolean(e.location) }],
       ['PROJECT_DESCRIPTION_BLOCK', { value: escapeHtml(e.project_description || ''), present: Boolean(e.project_description) }],
+      ['BULLETS_BLOCK', { value: bullets, present: Boolean(bullets) }],
+      ['TECHNOLOGIES_BLOCK', { value: escapeHtml(e.technologies || ''), present: Boolean(e.technologies) }],
     ]);
     return fillEntry(entryTemplate, blocks, {
       COMPANY: escapeHtml(e.company || ''),
@@ -388,6 +392,7 @@ ${bullets}
       LOCATION: escapeHtml(e.location || ''),
       PROJECT_DESCRIPTION: escapeHtml(e.project_description || ''),
       BULLETS: bullets,
+      TECHNOLOGIES: escapeHtml(e.technologies || ''),
     }, blockValues);
   }).join('\n  ');
 }

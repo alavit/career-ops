@@ -203,3 +203,18 @@ Agent(
 ```
 
 Execute the instructions from the loaded mode file.
+
+## CV Experience Formatting Invariant
+
+For every generated CV, match the user's reference format for each work-experience entry:
+
+```markdown
+IRIS project: core platform for project management at construction sites
+
+- Achievement bullet
+- Achievement bullet
+
+**Tools and Technologies:** Java, Microservices, JUnit, REST Assured
+```
+
+Render the project description as a plain, non-bulleted paragraph immediately after the work-entry header/location and before achievement bullets. Render achievement statements as bullets. After those bullets, render `**Tools and Technologies:**` plus its comma-separated values as a plain, non-bulleted paragraph. Keep a blank line between these blocks. Preserve the source content and apply any explicit skill-filtering rules to the tools line. Never convert the project description or tools paragraph to a list item. If a renderer cannot produce this structure, adapt its payload/template or use a compatible rendering path instead of simulating the paragraphs with bullets.

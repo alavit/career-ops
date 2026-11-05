@@ -7,6 +7,9 @@
     ROLE             — job title
     BULLETS          — rendered <li> tags
     LOCATION_BLOCK   — conditional: .job-location div when location present; omitted when absent
+    PROJECT_DESCRIPTION_BLOCK — conditional plain paragraph before achievement bullets
+    BULLETS_BLOCK    — conditional achievement list
+    TECHNOLOGIES_BLOCK — conditional plain paragraph after achievement bullets
 
   Template packs: edit tag names, class names, and field order freely inside the ENTRY zone.
 -->
@@ -15,10 +18,13 @@
   <div class="job-role">{{ROLE}}</div>
   <div class="job-company">{{COMPANY}}</div>
   {{LOCATION_BLOCK}}
+  {{PROJECT_DESCRIPTION_BLOCK}}
   <div class="job-period">{{PERIOD}}</div>
-  <ul>
-    {{BULLETS}}
-  </ul>
+  {{BULLETS_BLOCK}}
+  {{TECHNOLOGIES_BLOCK}}
 </div>
 <!--LOCATION_BLOCK--><div class="job-location">{{LOCATION}}</div><!--/LOCATION_BLOCK-->
+<!--PROJECT_DESCRIPTION_BLOCK--><div class="job-project-description">{{PROJECT_DESCRIPTION}}</div><!--/PROJECT_DESCRIPTION_BLOCK-->
+<!--BULLETS_BLOCK--><ul>{{BULLETS}}</ul><!--/BULLETS_BLOCK-->
+<!--TECHNOLOGIES_BLOCK--><div class="job-technologies"><strong>Tools and Technologies:</strong> {{TECHNOLOGIES}}</div><!--/TECHNOLOGIES_BLOCK-->
 <!--/ENTRY-->
